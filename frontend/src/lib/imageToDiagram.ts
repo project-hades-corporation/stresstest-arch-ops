@@ -28,9 +28,15 @@ interface DiagramNode {
 }
 
 const COMPONENT_WORDS =
-  /\b(application|database|redis|cache|gateway|service|server|queue|client|browser|worker|storage|api|frontend|backend)\b/i;
+  /\b(application|app|database|db|redis|cache|gateway|service|server|queue|client|browser|worker|storage|api|frontend|backend|waf|alb|elb|nlb|eks|ecs|ecr|lambda|s3|rds|sqs|sns|vpc|cdn|cloudfront|nginx|kubernetes|k8s|docker|container|pod|cluster|pipeline|github|gitlab|jenkins|ci|terraform|prometheus|grafana|kafka|rabbitmq|postgres|mysql|mongo|elastic|elasticsearch|kibana|vault|consul|istio|envoy|traefik|haproxy|memcached|dynamo|dynamodb|firestore|bigquery|pubsub|gke|gcs|azure|aws|gcp|load.?balancer|ingress|egress|proxy|broker|registry|repository|repo|bucket|blob|function|microservice|monolith|edge|router|switch|firewall|dns|cdn|akamai|fastly|vercel|netlify)\b/i;
 const RELATION_WORDS =
-  /\b(read|write|hit|miss|request|response|send|receive|connect|fetch|query|publish|consume|replicate|flow|call)\b/i;
+  /\b(read|write|hit|miss|request|response|send|receive|connect|fetch|query|publish|consume|replicate|flow|call|push|pull|upload|download|deploy|trigger|build|checkout|rollout|invoke|notify|sync|poll|emit|subscribe|forward|route|redirect|register|update|delete)\b|\b\d+[.)]\s*\w/i;
+// Reject OCR lines that are obviously noise: only allow letters, digits,
+// spaces, hyphens, dots, slashes, and apostrophes, and require at least two
+// consecutive letters so single-char tokens and symbol sequences are dropped.
+const CLEAN_TEXT = /^[\w\s'\-./]+$/;
+const HAS_LETTERS = /[a-zA-Z]{2,}/;
+
 const CANVAS_ORIGIN_X = 40;
 const CANVAS_ORIGIN_Y = 40;
 
@@ -82,13 +88,10 @@ export async function convertImageToDiagram(
     width: node.width,
     height: node.height,
     roundness: { type: 3 as const },
-    strokeColor: strokeForHue(node.hue),
-    backgroundColor: fillForHue(node.hue),
-    fillStyle: "solid" as const,
     label: {
       text: node.label,
-      fontSize: 20,
-      strokeColor: "#f8fafc",
+      fontSize: 14,
+      verticalAlign: "middle" as const,
     },
   }));
   const relationLines = lines.filter(
@@ -96,8 +99,7 @@ export async function convertImageToDiagram(
   );
   const arrows = relationLines
     .map((line, index) => buildArrow(line, nodes, index))
-    .filter((arrow): arrow is NonNullable<typeof arrow> => arrow !== null)
-    .flatMap(({ arrow, label }) => [arrow, label]);
+    .filter((arrow): arrow is NonNullable<typeof arrow> => arrow !== null);
   return [...nodeElements, ...arrows];
 }
 
@@ -297,58 +299,70 @@ function findColorRegions(data: Uint8ClampedArray, width: number, height: number
   return regions.sort((left, right) => right.width * right.height - left.width * left.height);
 }
 
+const NODE_W = 160;
+const NODE_H = 80;
+const NODE_PAD = 28;
+
 function buildNodes(
   regions: Region[],
   lines: OCRLine[],
   width: number,
   height: number
 ): DiagramNode[] {
-  const scale = 1;
-  const candidates = lines
-    .filter((line) => COMPONENT_WORDS.test(line.text) && !RELATION_WORDS.test(line.text))
-    .sort((left, right) => right.confidence - left.confidence);
-  const usedLabels = new Set<OCRLine>();
-  const nodes = regions.slice(0, 16).map((region, index) => {
-    const centerX = region.x + region.width / 2;
-    const centerY = region.y + region.height / 2;
-    const nearest = candidates
-      .filter((line) => !usedLabels.has(line))
-      .map((line) => ({
-        line,
-        distance: Math.hypot(
-          centerX - (line.x + line.width / 2) * scale,
-          centerY - (line.y + line.height / 2) * scale
-        ),
-      }))
-      .sort((left, right) => left.distance - right.distance)[0];
-    const maxDistance = Math.hypot(width, height) * 0.38;
-    const sourceText = nearest && nearest.distance <= maxDistance ? nearest.line : null;
-    if (sourceText) usedLabels.add(sourceText);
+  // Primary strategy: one node per distinct text label, positioned at the
+  // label's location in the image. This avoids the overlap caused by using
+  // region bounding boxes, which are large containers in complex diagrams.
+  const componentLines = lines.filter(
+    (line) =>
+      !RELATION_WORDS.test(line.text) &&
+      line.confidence >= 30 &&
+      line.text.length >= 3 &&
+      CLEAN_TEXT.test(line.text) &&
+      HAS_LETTERS.test(line.text)
+  );
+
+  const nodes: DiagramNode[] = componentLines.map((line, index) => {
+    const cx = line.x + line.width / 2;
+    const cy = line.y + line.height / 2;
     return {
       id: `image_node_${index + 1}`,
-      label: sourceText?.text ?? `Component ${index + 1}`,
-      x: CANVAS_ORIGIN_X + region.x / scale,
-      y: CANVAS_ORIGIN_Y + region.y / scale,
-      width: Math.max(100, region.width / scale),
-      height: Math.max(70, region.height / scale),
-      hue: region.hue,
+      label: line.text,
+      x: CANVAS_ORIGIN_X + Math.max(0, cx - NODE_W / 2),
+      y: CANVAS_ORIGIN_Y + Math.max(0, cy - NODE_H / 2),
+      width: NODE_W,
+      height: NODE_H,
+      hue: 220,
     };
   });
 
-  for (const line of candidates) {
-    if (usedLabels.has(line)) continue;
-    const x = (line.x + line.width / 2) * scale;
-    const y = (line.y + line.height / 2) * scale;
-    nodes.push({
-      id: `image_node_${nodes.length + 1}`,
-      label: line.text,
-      x: CANVAS_ORIGIN_X + Math.max(0, x - 90),
-      y: CANVAS_ORIGIN_Y + Math.max(0, y - 45),
-      width: 180,
-      height: 90,
-      hue: 220,
+  // Secondary: add nodes for any colour region that has no nearby text label,
+  // so purely graphical components are not silently dropped.
+  const usedRegions = new Set<number>();
+  for (const [ri, region] of dedupedRegions(regions).entries()) {
+    const cx = region.x + region.width / 2;
+    const cy = region.y + region.height / 2;
+    const hasNearbyLabel = componentLines.some((line) => {
+      const lx = line.x + line.width / 2;
+      const ly = line.y + line.height / 2;
+      return (
+        lx >= region.x - 4 &&
+        lx <= region.x + region.width + 4 &&
+        ly >= region.y - 4 &&
+        ly <= region.y + region.height + Math.max(region.height * 0.6, 20)
+      );
     });
-    usedLabels.add(line);
+    if (!hasNearbyLabel && !usedRegions.has(ri)) {
+      usedRegions.add(ri);
+      nodes.push({
+        id: `image_node_${nodes.length + 1}`,
+        label: `Component ${nodes.length + 1}`,
+        x: CANVAS_ORIGIN_X + Math.max(0, cx - NODE_W / 2),
+        y: CANVAS_ORIGIN_Y + Math.max(0, cy - NODE_H / 2),
+        width: NODE_W,
+        height: NODE_H,
+        hue: region.hue,
+      });
+    }
   }
 
   if (nodes.length < 2) {
@@ -356,14 +370,62 @@ function buildNodes(
       "I found text, but not enough diagram components to reconstruct editable shapes. Try a clearer image."
     );
   }
-  return nodes;
+  return deOverlapNodes(nodes);
+}
+
+function dedupedRegions(regions: Region[]): Region[] {
+  // Skip any region that contains 2 or more smaller already-accepted regions —
+  // those are container frames, not component nodes.
+  const bySize = [...regions].sort((a, b) => a.width * a.height - b.width * b.height);
+  const accepted: Region[] = [];
+  for (const region of bySize) {
+    const containedCount = accepted.filter((existing) => {
+      const ox = Math.max(0,
+        Math.min(region.x + region.width, existing.x + existing.width) - Math.max(region.x, existing.x));
+      const oy = Math.max(0,
+        Math.min(region.y + region.height, existing.y + existing.height) - Math.max(region.y, existing.y));
+      return (ox * oy) / (existing.width * existing.height) > 0.55;
+    }).length;
+    if (containedCount < 2) accepted.push(region);
+  }
+  return accepted;
+}
+
+function deOverlapNodes(nodes: DiagramNode[]): DiagramNode[] {
+  const result = nodes.map((n) => ({ ...n }));
+  for (let iter = 0; iter < 80; iter++) {
+    let moved = false;
+    for (let i = 0; i < result.length; i++) {
+      for (let j = i + 1; j < result.length; j++) {
+        const a = result[i];
+        const b = result[j];
+        const ox = Math.min(a.x + a.width + NODE_PAD, b.x + b.width + NODE_PAD) - Math.max(a.x, b.x);
+        const oy = Math.min(a.y + a.height + NODE_PAD, b.y + b.height + NODE_PAD) - Math.max(a.y, b.y);
+        if (ox > 0 && oy > 0) {
+          const half = (ox < oy ? ox : oy) / 2 + 1;
+          if (ox < oy) {
+            const dir = a.x + a.width / 2 <= b.x + b.width / 2 ? -1 : 1;
+            result[i].x += dir * half;
+            result[j].x -= dir * half;
+          } else {
+            const dir = a.y + a.height / 2 <= b.y + b.height / 2 ? -1 : 1;
+            result[i].y += dir * half;
+            result[j].y -= dir * half;
+          }
+          moved = true;
+        }
+      }
+    }
+    if (!moved) break;
+  }
+  return result;
 }
 
 function buildArrow(
   line: OCRLine,
   nodes: DiagramNode[],
   index: number
-): { arrow: ExcalidrawElementSkeleton; label: ExcalidrawElementSkeleton } | null {
+): ExcalidrawElementSkeleton | null {
   const text = line.text.toLowerCase();
   const sourceHint = text.match(/\bfrom\s+([\w-]+)/)?.[1];
   const targetHint = text.match(/\bto\s+([\w-]+)/)?.[1];
@@ -414,52 +476,15 @@ function buildArrow(
   }
   if (!source || !target) return null;
 
-  const sourceX = source.x + source.width / 2;
-  const sourceY = source.y + source.height / 2;
-  const targetX = target.x + target.width / 2;
-  const targetY = target.y + target.height / 2;
-  const dx = targetX - sourceX;
-  const dy = targetY - sourceY;
-  const sourceOffset = Math.min(
-    Math.abs(dx) > 0 ? source.width / (2 * Math.abs(dx)) : Infinity,
-    Math.abs(dy) > 0 ? source.height / (2 * Math.abs(dy)) : Infinity,
-    0.42
-  );
-  const targetOffset = Math.min(
-    Math.abs(dx) > 0 ? target.width / (2 * Math.abs(dx)) : Infinity,
-    Math.abs(dy) > 0 ? target.height / (2 * Math.abs(dy)) : Infinity,
-    0.42
-  );
-  const startX = sourceX + dx * sourceOffset;
-  const startY = sourceY + dy * sourceOffset;
-  const endX = targetX - dx * targetOffset;
-  const endY = targetY - dy * targetOffset;
-  const originX = Math.min(startX, endX);
-  const originY = Math.min(startY, endY);
   return {
-    arrow: {
-      type: "arrow",
-      id: `image_arrow_${index + 1}`,
-      x: originX,
-      y: originY,
-      width: Math.max(1, Math.abs(endX - startX)),
-      height: Math.max(1, Math.abs(endY - startY)),
-      points: [
-        [startX - originX, startY - originY],
-        [endX - originX, endY - originY],
-      ],
-      endArrowhead: "arrow",
-      strokeColor: "#fbbf24",
-      strokeWidth: 4,
-    },
-    label: {
-      type: "text",
-      x: CANVAS_ORIGIN_X + (startX + endX) / 2 - 70,
-      y: CANVAS_ORIGIN_Y + (startY + endY) / 2 - 12,
-      text: line.text,
-      fontSize: 18,
-      strokeColor: "#fbbf24",
-    },
+    type: "arrow",
+    id: `image_arrow_${index + 1}`,
+    x: (source.x + source.width / 2 + target.x + target.width / 2) / 2,
+    y: (source.y + source.height / 2 + target.y + target.height / 2) / 2,
+    start: { id: source.id },
+    end: { id: target.id },
+    endArrowhead: "arrow",
+    label: { text: line.text, fontSize: 14 },
   };
 }
 
@@ -473,18 +498,3 @@ function hueOf(red: number, green: number, blue: number): number {
   return ((red - green) / delta + 4) * 60;
 }
 
-function strokeForHue(hue: number): string {
-  if (hue < 25 || hue >= 345) return "#ef4444";
-  if (hue < 80) return "#eab308";
-  if (hue < 165) return "#22c55e";
-  if (hue < 255) return "#3b82f6";
-  return "#a78bfa";
-}
-
-function fillForHue(hue: number): string {
-  if (hue < 25 || hue >= 345) return "#451a1a";
-  if (hue < 80) return "#422006";
-  if (hue < 165) return "#064e3b";
-  if (hue < 255) return "#172554";
-  return "#2e1065";
-}

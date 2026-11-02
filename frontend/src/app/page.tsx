@@ -20,7 +20,6 @@ import SaveOutlinedIcon from "@mui/icons-material/SaveOutlined";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
-import type { ExcalidrawElementSkeleton } from "@excalidraw/excalidraw/data/transform";
 import type { AppState, BinaryFiles } from "@excalidraw/excalidraw/types";
 import type { ImportedDataState } from "@excalidraw/excalidraw/data/types";
 import BlueprintModal from "../../components/BlueprintViewer";
@@ -56,15 +55,6 @@ const Canvas = dynamic(() => import("../../components/CanvasExcalidraw"), {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isArrowSkeleton(
-  element: ExcalidrawElementSkeleton
-): element is ExcalidrawElementSkeleton & {
-  type: "arrow";
-  points: readonly [number, number][];
-} {
-  return element.type === "arrow";
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -324,49 +314,13 @@ export default function Home() {
         baseScene = cleaned.scene;
         replacedElements = cleaned.removedElements;
         const diagramSkeleton = await convertImageToDiagram(file, setImportProgress);
-        const diagramArrows = diagramSkeleton.filter(isArrowSkeleton).map((arrow) => ({
-          x: arrow.x,
-          y: arrow.y,
-          points: arrow.points.map(([x, y]) => [x, y] as [number, number]),
+        importedElements = convertToExcalidrawElements(diagramSkeleton).map((element) => ({
+          ...element,
+          customData: {
+            ...element.customData,
+            imageToDiagramSource: conversionKey,
+          },
         }));
-        let arrowIndex = 0;
-        importedElements = convertToExcalidrawElements(diagramSkeleton).map(
-          (element) => {
-            const skeleton =
-              element.type === "arrow" ? diagramArrows[arrowIndex++] : undefined;
-            const arrowPoints = skeleton?.points;
-            const minX = arrowPoints
-              ? Math.min(...arrowPoints.map(([x]) => x))
-              : 0;
-            const minY = arrowPoints
-              ? Math.min(...arrowPoints.map(([, y]) => y))
-              : 0;
-            const maxX = arrowPoints
-              ? Math.max(...arrowPoints.map(([x]) => x))
-              : 0;
-            const maxY = arrowPoints
-              ? Math.max(...arrowPoints.map(([, y]) => y))
-              : 0;
-            return {
-              ...element,
-              ...(skeleton
-                ? {
-                    x: skeleton.x + minX,
-                    y: skeleton.y + minY,
-                    width: maxX - minX,
-                    height: maxY - minY,
-                    points: arrowPoints?.map(
-                      ([x, y]) => [x - minX, y - minY] as [number, number]
-                    ),
-                  }
-                : {}),
-              customData: {
-                ...element.customData,
-                imageToDiagramSource: conversionKey,
-              },
-            };
-          }
-        );
       } else {
         const text = await extractArchitectureFile(file, setImportProgress);
         const rightEdge = canvasScene.elements.reduce(
