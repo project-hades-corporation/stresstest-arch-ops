@@ -157,6 +157,24 @@ export async function runStressScenario(
   return data;
 }
 
+export interface DiagramModel {
+  name: string;
+  provider: string;
+  vision: boolean;
+  size: number;
+}
+
+export async function listDiagramModels(): Promise<DiagramModel[]> {
+  try {
+    const response = await fetch("/api/parse-diagram");
+    if (!response.ok) return [];
+    const data = (await response.json()) as { models?: DiagramModel[] };
+    return data.models ?? [];
+  } catch {
+    return [];
+  }
+}
+
 export async function applyFixes(fixes: Record<string, unknown>): Promise<{ ok: boolean; output?: Record<string, unknown> }> {
   const res = await fetch(`${API_BASE_URL}/orchestrate/fixes`, {
     method: "POST",

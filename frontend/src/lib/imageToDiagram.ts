@@ -1,5 +1,133 @@
 import type { ExcalidrawElementSkeleton } from "@excalidraw/excalidraw/data/transform";
 
+// ---------------------------------------------------------------------------
+// Vision-LLM path
+// ---------------------------------------------------------------------------
+
+interface LLMNode {
+  id: string;
+  label: string;
+}
+
+interface LLMEdge {
+  from: string;
+  to: string;
+  label?: string;
+}
+
+const LLM_CELL_W = 210;
+const LLM_CELL_H = 120;
+const LLM_NODE_W = 160;
+const LLM_NODE_H = 80;
+const LLM_ORIGIN_X = 40;
+const LLM_ORIGIN_Y = 40;
+
+function layoutFromLLM(
+  nodes: LLMNode[],
+  edges: LLMEdge[]
+): ExcalidrawElementSkeleton[] {
+  if (nodes.length === 0) return [];
+
+  const incoming = new Map<string, string[]>();
+  const outgoing = new Map<string, string[]>();
+  for (const n of nodes) {
+    incoming.set(n.id, []);
+    outgoing.set(n.id, []);
+  }
+  const nodeIds = new Set(nodes.map((n) => n.id));
+  const validEdges = edges.filter((e) => nodeIds.has(e.from) && nodeIds.has(e.to) && e.from !== e.to);
+  for (const e of validEdges) {
+    incoming.get(e.to)?.push(e.from);
+    outgoing.get(e.from)?.push(e.to);
+  }
+
+  // BFS from roots to assign columns
+  const column = new Map<string, number>();
+  const queue: string[] = nodes
+    .filter((n) => (incoming.get(n.id)?.length ?? 0) === 0)
+    .map((n) => n.id);
+  for (const id of queue) column.set(id, 0);
+  if (queue.length === 0) {
+    for (const n of nodes) { column.set(n.id, 0); queue.push(n.id); }
+  }
+  let head = 0;
+  while (head < queue.length) {
+    const id = queue[head++];
+    const col = column.get(id) ?? 0;
+    for (const next of outgoing.get(id) ?? []) {
+      if (!column.has(next)) { column.set(next, col + 1); queue.push(next); }
+    }
+  }
+  for (const n of nodes) { if (!column.has(n.id)) column.set(n.id, 0); }
+
+  const byCol = new Map<number, string[]>();
+  for (const [id, col] of column) {
+    const group = byCol.get(col) ?? [];
+    group.push(id);
+    byCol.set(col, group);
+  }
+
+  const pos = new Map<string, { x: number; y: number }>();
+  for (const [col, ids] of byCol) {
+    ids.forEach((id, row) => {
+      pos.set(id, { x: LLM_ORIGIN_X + col * LLM_CELL_W, y: LLM_ORIGIN_Y + row * LLM_CELL_H });
+    });
+  }
+
+  const nodeElements = nodes.map((n) => {
+    const p = pos.get(n.id) ?? { x: LLM_ORIGIN_X, y: LLM_ORIGIN_Y };
+    return {
+      type: "rectangle" as const,
+      id: n.id,
+      x: p.x,
+      y: p.y,
+      width: LLM_NODE_W,
+      height: LLM_NODE_H,
+      roundness: { type: 3 as const },
+      label: { text: n.label, fontSize: 14, verticalAlign: "middle" as const },
+    };
+  });
+
+  const arrowElements = validEdges.map((e, i) => ({
+    type: "arrow" as const,
+    id: `llm_arrow_${i + 1}`,
+    x: 0,
+    y: 0,
+    start: { id: e.from },
+    end: { id: e.to },
+    endArrowhead: "arrow" as const,
+    ...(e.label ? { label: { text: e.label, fontSize: 12 } } : {}),
+  }));
+
+  return [...nodeElements, ...arrowElements];
+}
+
+async function parseDiagramWithLLM(
+  file: File,
+  onProgress: (message: string) => void
+): Promise<ExcalidrawElementSkeleton[] | null> {
+  onProgress("Parsing diagram with vision model...");
+  const form = new FormData();
+  form.set("file", file);
+  let response: Response;
+  try {
+    response = await fetch("/api/parse-diagram", { method: "POST", body: form });
+  } catch {
+    return null;
+  }
+  if (!response.ok) return null;
+  const data = (await response.json()) as { nodes?: unknown; edges?: unknown };
+  const nodes = data.nodes;
+  const edges = data.edges ?? [];
+  if (!Array.isArray(nodes) || nodes.length < 2) return null;
+  onProgress("Laying out diagram elements...");
+  return layoutFromLLM(nodes as LLMNode[], edges as LLMEdge[]);
+}
+
+// ---------------------------------------------------------------------------
+// OCR fallback types
+// ---------------------------------------------------------------------------
+
 interface OCRLine {
   text: string;
   confidence: number;
@@ -44,6 +172,11 @@ export async function convertImageToDiagram(
   file: File,
   onProgress: (message: string) => void
 ): Promise<ExcalidrawElementSkeleton[]> {
+  // Primary: vision LLM via backend
+  const llmResult = await parseDiagramWithLLM(file, onProgress);
+  if (llmResult !== null) return llmResult;
+
+  // Fallback: local OCR + colour-region detection
   onProgress("Reading labels and diagram layout locally...");
   const image = await createImageBitmap(file);
   const canvasWidth = Math.min(700, image.width);
