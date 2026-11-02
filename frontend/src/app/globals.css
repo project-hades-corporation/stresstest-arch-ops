@@ -1,0 +1,149 @@
+html,
+body,
+#__next {
+  min-height: 100%;
+  margin: 0;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: #0b1020;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.platform-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  background:
+    radial-gradient(ellipse at 50% -25%, rgba(86, 93, 226, 0.12), transparent 58%),
+    #0b1020;
+}
+
+.platform-appbar {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(11, 16, 32, 0.9) !important;
+  backdrop-filter: blur(16px);
+}
+
+.platform-toolbar {
+  min-height: 68px;
+  padding-inline: clamp(16px, 3vw, 42px);
+}
+
+.brand-mark {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 1px solid rgba(129, 140, 248, 0.35);
+  border-radius: 11px;
+  color: #a5b4fc;
+  background: rgba(99, 102, 241, 0.16);
+}
+
+.platform-main {
+  display: flex;
+  width: min(100% - 48px, 1500px);
+  flex: 1;
+  flex-direction: column;
+  gap: 20px;
+  margin: 0 auto;
+  padding: 28px 0 32px;
+}
+
+.platform-alert {
+  width: 100%;
+}
+
+.canvas-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.canvas-toolbar {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 14px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 12px;
+  background: rgba(17, 24, 48, 0.7);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: 0 0 12px currentColor;
+}
+
+.canvas-frame {
+  position: relative;
+  height: clamp(460px, calc(100dvh - 390px), 900px);
+  min-height: 460px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: 16px;
+  background: #111827;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.22);
+}
+
+.canvas-frame .excalidraw {
+  width: 100%;
+  height: 100%;
+}
+
+@media (max-width: 760px) {
+  .platform-toolbar {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-block: 10px;
+  }
+
+  .toolbar-action {
+    min-width: 40px;
+    padding-inline: 8px !important;
+  }
+
+  .toolbar-action .MuiButton-startIcon {
+    margin: 0;
+  }
+
+  .platform-main {
+    width: calc(100% - 24px);
+    gap: 14px;
+    padding-top: 20px;
+  }
+
+  .canvas-heading {
+    align-items: flex-start;
+  }
+
+  .canvas-toolbar {
+    flex-wrap: wrap;
+    padding-block: 10px;
+  }
+
+  .simulation-summary {
+    width: 100%;
+  }
+
+  .canvas-frame {
+    min-height: 420px;
+  }
+}
