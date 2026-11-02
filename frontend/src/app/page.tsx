@@ -13,6 +13,7 @@ import {
   Typography,
 } from "@mui/material";
 import ArchitectureOutlinedIcon from "@mui/icons-material/ArchitectureOutlined";
+import ClearAllOutlinedIcon from "@mui/icons-material/ClearAllOutlined";
 import CloudUploadOutlinedIcon from "@mui/icons-material/CloudUploadOutlined";
 import CodeOutlinedIcon from "@mui/icons-material/CodeOutlined";
 import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
@@ -254,6 +255,21 @@ export default function Home() {
     }
   };
 
+  const handleClearCanvas = useCallback(async () => {
+    const empty: CanvasSceneData = { elements: [] };
+    setError("");
+    try {
+      await saveCanvas(empty);
+      initialCanvasScene.current = empty;
+      setCanvasScene(empty);
+      setStatusMap({});
+      setSimulationSummary("");
+      setCanvasRevision((revision) => revision + 1);
+    } catch (clearError) {
+      setError(clearError instanceof Error ? clearError.message : "Could not clear the canvas.");
+    }
+  }, []);
+
   const handleImport = async (file?: File) => {
     if (!file) return;
     setError("");
@@ -392,6 +408,15 @@ export default function Home() {
               disabled={importing}
             >
               {importing ? "Importing" : "Import"}
+            </Button>
+            <Button
+              className="toolbar-action"
+              startIcon={<ClearAllOutlinedIcon />}
+              onClick={() => void handleClearCanvas()}
+              disabled={!canvasReady || canvasScene.elements.length === 0}
+              color="inherit"
+            >
+              Clear
             </Button>
             <Button
               className="toolbar-action"

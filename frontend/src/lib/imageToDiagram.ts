@@ -15,6 +15,31 @@ interface LLMEdge {
   label?: string;
 }
 
+// Component-type palette: [backgroundColor, strokeColor]
+const COMPONENT_COLORS: Array<[RegExp, string, string]> = [
+  [/\b(postgres|mysql|mariadb|aurora|rds|sql|mongo|dynamo|dynamodb|firestore|cassandra|database|db)\b/i, "#dbeafe", "#3b82f6"],
+  [/\b(redis|memcached|cache|elasticache)\b/i,                                                           "#dcfce7", "#16a34a"],
+  [/\b(kafka|rabbitmq|sqs|sns|pubsub|queue|broker|topic|event|stream)\b/i,                             "#fef9c3", "#ca8a04"],
+  [/\b(s3|gcs|blob|bucket|storage|efs|ebs|nfs)\b/i,                                                    "#e0f2fe", "#0284c7"],
+  [/\b(lambda|function|serverless|faas)\b/i,                                                            "#fce7f3", "#db2777"],
+  [/\b(eks|ecs|k8s|kubernetes|pod|container|docker|cluster)\b/i,                                        "#ede9fe", "#7c3aed"],
+  [/\b(alb|elb|nlb|load.?balancer|haproxy|nginx|traefik|envoy|istio)\b/i,                              "#ffedd5", "#ea580c"],
+  [/\b(cdn|cloudfront|akamai|fastly|edge)\b/i,                                                          "#f0fdf4", "#15803d"],
+  [/\b(waf|firewall|security|vault|shield|guard)\b/i,                                                   "#fee2e2", "#dc2626"],
+  [/\b(github|gitlab|jenkins|ci|cd|pipeline|terraform|ansible)\b/i,                                    "#f1f5f9", "#475569"],
+  [/\b(api.?gateway|gateway|ingress|proxy)\b/i,                                                         "#fff7ed", "#c2410c"],
+  [/\b(frontend|web|browser|client|ui|spa)\b/i,                                                         "#fdf4ff", "#a21caf"],
+  [/\b(backend|service|microservice|server|worker|app)\b/i,                                             "#f0f9ff", "#0369a1"],
+  [/\b(vpc|network|subnet|vnet|zone)\b/i,                                                               "#f8fafc", "#64748b"],
+];
+
+function colorForLabel(label: string): { backgroundColor: string; strokeColor: string } | null {
+  for (const [pattern, bg, stroke] of COMPONENT_COLORS) {
+    if (pattern.test(label)) return { backgroundColor: bg, strokeColor: stroke };
+  }
+  return null;
+}
+
 const LLM_CELL_W = 210;
 const LLM_CELL_H = 120;
 const LLM_NODE_W = 160;
@@ -76,6 +101,7 @@ function layoutFromLLM(
 
   const nodeElements = nodes.map((n) => {
     const p = pos.get(n.id) ?? { x: LLM_ORIGIN_X, y: LLM_ORIGIN_Y };
+    const colors = colorForLabel(n.label);
     return {
       type: "rectangle" as const,
       id: n.id,
@@ -85,6 +111,13 @@ function layoutFromLLM(
       height: LLM_NODE_H,
       roundness: { type: 3 as const },
       label: { text: n.label, fontSize: 14, verticalAlign: "middle" as const },
+      ...(colors
+        ? {
+            backgroundColor: colors.backgroundColor,
+            strokeColor: colors.strokeColor,
+            fillStyle: "solid" as const,
+          }
+        : {}),
     };
   });
 
