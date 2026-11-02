@@ -36,7 +36,11 @@ command -v npm >/dev/null 2>&1 || {
 }
 echo "[OK] Node.js $(node --version)."
 
-VENV_PYTHON="$APP_DIR/.venv/Scripts/python.exe"
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]]; then
+  VENV_PYTHON="$APP_DIR/.venv/Scripts/python.exe"
+else
+  VENV_PYTHON="$APP_DIR/.venv/bin/python"
+fi
 if [ ! -x "$VENV_PYTHON" ]; then
   echo "Creating Python virtual environment..."
   "${PYTHON_CMD[@]}" -m venv "$APP_DIR/.venv"
