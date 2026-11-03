@@ -3,14 +3,37 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+DEFAULT_ARCHITECTURE_NAME = "Default architecture"
+DEFAULT_REPORT_FILENAME = "stress-report.md"
+
 
 def _cell(value: Any) -> str:
     return str(value).replace("\\", "\\\\").replace("|", "\\|").replace("\r", " ").replace("\n", " ")
+
+
+def architecture_slug(architecture_name: str | None) -> str:
+    """Return a filesystem-safe slug for an architecture name."""
+    slug = re.sub(r"[^a-z0-9]+", "-", (architecture_name or "").strip().lower()).strip("-")
+    return slug[:80].strip("-") or "architecture"
+
+
+def report_filename(architecture_name: str | None) -> str:
+    """Map an architecture name to its report file.
+
+    The default name keeps the legacy ``stress-report.md`` filename so existing
+    single-architecture setups keep working. Named architectures get a dedicated
+    ``stress-report-<slug>.md`` file, which is replaced only when the same name is
+    simulated again.
+    """
+    if not (architecture_name or "").strip():
+        return DEFAULT_REPORT_FILENAME
+    return f"stress-report-{architecture_slug(architecture_name)}.md"
 
 
 def _format_rps(value: Any) -> str:
@@ -21,12 +44,18 @@ def _format_utilization(value: Any) -> str:
     return "Unknown" if value is None else f"{value:.0%}"
 
 
-def render_report(result: dict[str, Any]) -> str:
+def render_report(
+    result: dict[str, Any],
+    architecture_name: str | None = None,
+    filename: str | None = None,
+) -> str:
     nodes = result["topology"]["nodes"]
     edges = result["topology"]["edges"]
     labels = {node["id"]: node["label"] for node in nodes}
     scenario = result["scenario_config"]
     recommendations = result["recommendations"]
+    display_name = (architecture_name or "").strip() or DEFAULT_ARCHITECTURE_NAME
+    report_file = filename or report_filename(architecture_name)
     status_counts = {
         status: sum(node["status"] == status for node in nodes)
         for status in ("CRITICAL", "WARNING", "OK")
@@ -42,7 +71,9 @@ def render_report(result: dict[str, Any]) -> str:
         "# Architecture Stress Test Report",
         "",
         f"- **Generated (UTC):** {generated_at}",
-        "- **Report file:** `reports/stress-report.md` (updated on every simulation run)",
+        f"- **Architecture:** {_cell(display_name)}",
+        f"- **Report file:** `reports/{report_file}` "
+        "(replaced only when this architecture is simulated again)",
         f"- **Scenario:** {_cell(result['scenario'])}",
         f"- **Overall result:** {status_counts['CRITICAL']} critical component(s), "
         f"{status_counts['WARNING']} warning component(s), {len(findings)} actionable finding(s)",
@@ -193,10 +224,16 @@ def render_report(result: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def write_report(report_directory: Path, result: dict[str, Any]) -> str:
+def write_report(
+    report_directory: Path,
+    result: dict[str, Any],
+    architecture_name: str | None = None,
+) -> tuple[str, str]:
+    """Write the report for one architecture and return (filename, markdown)."""
+    filename = report_filename(architecture_name)
     report_directory.mkdir(parents=True, exist_ok=True)
-    report_path = report_directory / "stress-report.md"
-    markdown = render_report(result)
+    report_path = report_directory / filename
+    markdown = render_report(result, architecture_name, filename)
     temporary_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -214,4 +251,4 @@ def write_report(report_directory: Path, result: dict[str, Any]) -> str:
     finally:
         if temporary_path is not None and temporary_path.exists():
             temporary_path.unlink()
-    return markdown
+    return filename, markdown

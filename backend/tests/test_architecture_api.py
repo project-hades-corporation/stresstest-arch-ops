@@ -138,15 +138,19 @@ class ArchitectureApiTests(unittest.TestCase):
         self.assertEqual(recommendation["severity"], "WARNING")
         self.assertIn("above the 80% warning threshold", recommendation["finding"])
 
-    def test_simulation_saves_detailed_report_and_updates_the_same_file(self) -> None:
+    def test_simulation_saves_one_report_per_architecture_name(self) -> None:
         self.client.post("/canvas", json=_canvas())
 
         first_response = self.client.post(
             "/simulate",
-            json={"scenario_type": "traffic_surge", "traffic_multiplier": 10},
+            json={
+                "scenario_type": "traffic_surge",
+                "traffic_multiplier": 10,
+                "architecture_name": "Checkout API",
+            },
         )
         first_report = first_response.json()["report"]
-        report_file = self.report_directory / "stress-report.md"
+        report_file = self.report_directory / "stress-report-checkout-api.md"
         first_contents = report_file.read_text(encoding="utf-8")
 
         second_response = self.client.post(
@@ -156,6 +160,7 @@ class ArchitectureApiTests(unittest.TestCase):
                 "scenario_text": "Reduced traffic baseline",
                 "traffic_multiplier": 1,
                 "dropped_nodes": [],
+                "architecture_name": "checkout api",
             },
         )
         second_report = second_response.json()["report"]
@@ -163,7 +168,7 @@ class ArchitectureApiTests(unittest.TestCase):
 
         self.assertEqual(first_response.status_code, 200)
         self.assertEqual(second_response.status_code, 200)
-        self.assertEqual(first_report["path"], "reports/stress-report.md")
+        self.assertEqual(first_report["path"], "reports/stress-report-checkout-api.md")
         self.assertEqual(second_report["path"], first_report["path"])
         self.assertEqual(second_contents, second_report["markdown"])
         self.assertNotEqual(first_contents, second_contents)
@@ -175,7 +180,53 @@ class ArchitectureApiTests(unittest.TestCase):
         self.assertIn("Reduced traffic baseline", second_contents)
         saved_report = self.client.get("/reports/latest")
         self.assertEqual(saved_report.status_code, 200)
-        self.assertEqual(saved_report.json(), second_report)
+        self.assertEqual(saved_report.json()["path"], second_report["path"])
+        self.assertEqual(saved_report.json()["markdown"], second_report["markdown"])
+
+    def test_new_architecture_name_creates_a_separate_report(self) -> None:
+        self.client.post("/canvas", json=_canvas())
+
+        first_response = self.client.post(
+            "/simulate",
+            json={
+                "scenario_type": "traffic_surge",
+                "traffic_multiplier": 10,
+                "architecture_name": "Checkout API",
+            },
+        )
+        second_response = self.client.post(
+            "/simulate",
+            json={
+                "scenario_type": "traffic_surge",
+                "traffic_multiplier": 10,
+                "architecture_name": "Search Cluster",
+            },
+        )
+
+        checkout_report = self.report_directory / "stress-report-checkout-api.md"
+        search_report = self.report_directory / "stress-report-search-cluster.md"
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        self.assertTrue(checkout_report.is_file())
+        self.assertTrue(search_report.is_file())
+        self.assertNotEqual(
+            first_response.json()["report"]["path"],
+            second_response.json()["report"]["path"],
+        )
+        self.assertIn("Checkout API", checkout_report.read_text(encoding="utf-8"))
+        self.assertIn("Search Cluster", search_report.read_text(encoding="utf-8"))
+
+    def test_simulation_without_architecture_name_uses_legacy_report_file(self) -> None:
+        self.client.post("/canvas", json=_canvas())
+
+        response = self.client.post(
+            "/simulate",
+            json={"scenario_type": "traffic_surge", "traffic_multiplier": 10},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["report"]["path"], "reports/stress-report.md")
+        self.assertTrue((self.report_directory / "stress-report.md").is_file())
 
     def test_latest_report_is_not_found_before_a_simulation(self) -> None:
         response = self.client.get("/reports/latest")

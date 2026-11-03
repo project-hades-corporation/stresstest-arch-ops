@@ -13,8 +13,10 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ScenarioType, StressScenarioRequest } from "../src/types";
+
+const ARCHITECTURE_NAME_STORAGE_KEY = "stress-arch.architecture-name";
 
 const SCENARIOS: Array<{
   id: ScenarioType;
@@ -46,14 +48,25 @@ interface ScenarioDrawerProps {
 }
 
 export default function ScenarioDrawer({ open, onClose, onRun, running }: ScenarioDrawerProps) {
+  const [architectureName, setArchitectureName] = useState("");
   const [scenarioType, setScenarioType] = useState<ScenarioType>("traffic_surge");
   const [scenarioText, setScenarioText] = useState("");
   const [trafficMultiplier, setTrafficMultiplier] = useState("10");
   const [droppedNodes, setDroppedNodes] = useState("");
   const [error, setError] = useState("");
 
+  useEffect(() => {
+    const savedName = window.localStorage.getItem(ARCHITECTURE_NAME_STORAGE_KEY);
+    if (savedName) setArchitectureName(savedName);
+  }, []);
+
   const run = async () => {
     setError("");
+    const trimmedArchitectureName = architectureName.trim();
+    if (!trimmedArchitectureName) {
+      setError("Enter an architecture name so its report can be saved.");
+      return;
+    }
     const multiplier = Number(trafficMultiplier);
     if (scenarioType !== "database_outage" && (!Number.isFinite(multiplier) || multiplier <= 0)) {
       setError("Enter a traffic multiplier greater than zero.");
@@ -65,8 +78,10 @@ export default function ScenarioDrawer({ open, onClose, onRun, running }: Scenar
     }
 
     try {
+      window.localStorage.setItem(ARCHITECTURE_NAME_STORAGE_KEY, trimmedArchitectureName);
       await onRun({
         scenario_type: scenarioType,
+        architecture_name: trimmedArchitectureName,
         scenario_text: scenarioText.trim() || undefined,
         traffic_multiplier: scenarioType === "database_outage" ? undefined : multiplier,
         baseline_rps: 100,
@@ -96,6 +111,21 @@ export default function ScenarioDrawer({ open, onClose, onRun, running }: Scenar
             Deterministic estimates from your current canvas.
           </Typography>
         </Box>
+
+        <Stack spacing={1}>
+          <Typography variant="overline" color="text.secondary">
+            Architecture
+          </Typography>
+          <TextField
+            label="Architecture name"
+            placeholder="e.g. Payments platform"
+            value={architectureName}
+            onChange={(event) => setArchitectureName(event.target.value)}
+            helperText="Re-running this name replaces its report; a new name creates a new report file."
+            disabled={running}
+            required
+          />
+        </Stack>
 
         <Stack spacing={1}>
           {SCENARIOS.map((scenario) => (

@@ -45,14 +45,16 @@ start.bat
 The start scripts reuse healthy services if they are already running and show
 the backend and frontend log locations if startup fails.
 
-Running a simulation creates a detailed Markdown report at
-`reports/stress-report.md`. Each subsequent run replaces that same file with
-the latest scenario results. The canvas shows a **View report & recommendations**
-action after a run and restores the latest report after reload; the report
-includes component and connection findings,
-scenario assumptions, prioritized deterministic remediation guidance, and
-limitations of the estimate. Capacity and replica targets are estimates, not
-validated production settings.
+Running a simulation creates a detailed Markdown report under `reports/`. The
+report filename is derived from the architecture name you enter, for example
+`reports/stress-report-checkout-api.md`. Re-running the same architecture name
+with a different scenario or an updated design replaces that architecture's
+report; entering a new name creates a separate report file. The canvas shows a
+**View report & recommendations** action after a run and restores the most
+recent report after reload; the report includes component and connection
+findings, scenario assumptions, prioritized deterministic remediation guidance,
+and limitations of the estimate. Capacity and replica targets are estimates,
+not validated production settings.
 
 ### Containerized setup
 

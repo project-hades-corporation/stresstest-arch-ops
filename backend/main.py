@@ -76,6 +76,7 @@ class CanvasSaveRequest(BaseModel):
 
 class StressSimulationRequest(BaseModel):
     scenario_type: Literal["traffic_surge", "database_outage", "custom"]
+    architecture_name: str | None = Field(default=None, max_length=80)
     scenario_text: str | None = Field(default=None, max_length=1_000)
     traffic_multiplier: float | None = Field(default=None, gt=0)
     baseline_rps: float = Field(default=100, ge=0)
@@ -243,15 +244,19 @@ async def simulate_stress(body: StressSimulationRequest) -> dict[str, Any]:
         topology, element_node_map, result["statuses"]
     )
     try:
-        report_markdown = write_report(REPORTS_DIR, result)
+        report_filename, report_markdown = write_report(
+            REPORTS_DIR, result, body.architecture_name
+        )
     except OSError as exc:
         raise HTTPException(
             status_code=500, detail=f"Simulation completed, but its report could not be saved: {exc}"
         ) from exc
+    report_path = f"reports/{report_filename}"
     return {
         "output": result,
         "report": {
-            "path": "reports/stress-report.md",
+            "path": report_path,
+            "architecture_name": (body.architecture_name or "").strip() or None,
             "markdown": report_markdown,
         },
     }
@@ -259,14 +264,26 @@ async def simulate_stress(body: StressSimulationRequest) -> dict[str, Any]:
 
 @app.get("/reports/latest")
 async def get_latest_report() -> dict[str, str]:
-    report_path = REPORTS_DIR / "stress-report.md"
+    try:
+        report_path = max(
+            (path for path in REPORTS_DIR.glob("stress-report*.md") if path.is_file()),
+            key=lambda path: path.stat().st_mtime,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(
+            status_code=404, detail="No simulation report has been generated yet."
+        ) from exc
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500, detail=f"Could not read the latest simulation report: {exc}"
+        ) from exc
     try:
         markdown = report_path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="No simulation report has been generated yet.") from exc
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"Could not read the latest simulation report: {exc}") from exc
-    return {"path": "reports/stress-report.md", "markdown": markdown}
+    return {"path": f"reports/{report_path.name}", "markdown": markdown}
 
 
 @app.post("/deployment")

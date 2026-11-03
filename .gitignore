@@ -27,7 +27,7 @@ coverage.xml
 /backend/storage/canvas.json
 /backend/storage/canvas-*.tmp
 /output/
-/reports/stress-report.md
+/reports/stress-report*.md
 *.log
 
 # Next.js and Node.js

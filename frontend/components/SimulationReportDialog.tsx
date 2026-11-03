@@ -44,8 +44,9 @@ export default function SimulationReportDialog({
       <DialogContent>
         <Box sx={{ mb: 1.5 }}>
           <Typography variant="body2" color="text.secondary">
-            Saved on the backend at <strong>{report?.path}</strong>. Each simulation
-            updates this same report file.
+            Saved on the backend at <strong>{report?.path}</strong>. Reports are grouped
+            by architecture name: re-running the same name replaces its file, while a
+            new name creates a separate report.
           </Typography>
         </Box>
         <Box

@@ -13,6 +13,7 @@ export interface CanvasSceneData {
 
 export interface StressScenarioRequest {
   scenario_type: ScenarioType;
+  architecture_name?: string;
   scenario_text?: string;
   traffic_multiplier?: number;
   baseline_rps?: number;
@@ -45,6 +46,7 @@ export interface Recommendation {
 
 export interface SimulationReport {
   path: string;
+  architecture_name?: string | null;
   markdown: string;
 }
 
