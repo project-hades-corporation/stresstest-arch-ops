@@ -7,13 +7,15 @@ Endpoints:
     WS /ws/stress              -> real-time agent thought streaming
 """
 
+import base64
 import json
 import os
 import tempfile
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+import httpx
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -27,7 +29,7 @@ from backend.agents.ingress_agent import IngressParserAgent
 from backend.agents.stress_agent import StressSimulatorAgent
 from backend.config import get_settings
 from backend.gateway.cli_gateway import CLIGateway
-from backend.gateway.llm_provider import generate_completion
+from backend.gateway.llm_provider import GatewayError, extract_json_object, generate_completion, get_gateway
 from backend.orchestrator import Orchestrator
 
 app = FastAPI(title="Architecture Stress Platform", version="0.1.0")
@@ -307,6 +309,94 @@ async def generate_deployment() -> dict[str, Any]:
         "output_directory": str(OUTPUT_DIR),
         "files": list(files),
     }
+
+
+_VISION_MODEL_FAMILIES = (
+    "vision", "llava", "moondream", "bakllava", "minicpm-v",
+    "phi3-vision", "phi-3-vision", "qwen2-vl", "pixtral",
+    "llama3.2-vision", "granite3.2", "gemma3",
+)
+
+
+@app.get("/models")
+async def list_models() -> dict[str, Any]:
+    """List models available in the configured Ollama instance."""
+    settings = get_settings()
+    ollama_url = settings.ollama_base_url.rstrip("/")
+    models: list[dict[str, Any]] = []
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{ollama_url}/api/tags")
+            if resp.status_code == 200:
+                for m in resp.json().get("models", []):
+                    name: str = m.get("name", "")
+                    name_lower = name.lower()
+                    vision = any(fam in name_lower for fam in _VISION_MODEL_FAMILIES)
+                    models.append(
+                        {
+                            "name": name,
+                            "provider": "ollama",
+                            "vision": vision,
+                            "size": m.get("size", 0),
+                        }
+                    )
+    except Exception:  # noqa: BLE001 – Ollama may not be running
+        pass
+    return {
+        "models": models,
+        "default_provider": settings.default_provider,
+        "ollama_url": ollama_url,
+    }
+
+
+_PARSE_DIAGRAM_PROMPT = (
+    "Analyze this architecture diagram and extract every component and connection.\n\n"
+    "Return ONLY a JSON object in exactly this format — no markdown, no prose:\n"
+    "{\n"
+    '  "nodes": [{"id": "snake_case_unique_id", "label": "Human Readable Name"}],\n'
+    '  "edges": [{"from": "source_node_id", "to": "target_node_id", "label": "arrow label or empty string"}]\n'
+    "}\n\n"
+    "Rules:\n"
+    "- Every visible box, service, database, queue, cache, load balancer, gateway, CDN, container, etc. is a node.\n"
+    "- Every arrow or connection between nodes is an edge.\n"
+    "- Node ids must be unique snake_case strings derived from the label.\n"
+    "- Edge from/to must reference valid node ids.\n"
+    "- Capture the arrow label text as the edge label when it is visible.\n"
+    "- Do NOT include any text outside the JSON object."
+)
+
+
+@app.post("/parse-diagram")
+async def parse_diagram(
+    file: UploadFile = File(...),
+    model_override: str | None = Form(None),
+) -> dict[str, Any]:
+    """Parse an architecture diagram image using a vision LLM.
+
+    Returns ``{"nodes": [...], "edges": [...]}`` extracted from the image.
+    """
+    data = await file.read()
+    mime = file.content_type or "image/png"
+    b64 = base64.b64encode(data).decode()
+
+    try:
+        gateway = get_gateway()
+        text = await gateway.generate_with_image(
+            prompt=_PARSE_DIAGRAM_PROMPT,
+            image_b64=b64,
+            image_mime=mime,
+            model_override=model_override or None,
+        )
+        result = extract_json_object(text)
+    except GatewayError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    if not isinstance(result.get("nodes"), list):
+        raise HTTPException(
+            status_code=422,
+            detail="The vision model returned an unrecognised structure.",
+        )
+    return result
 
 
 @app.post("/generate")

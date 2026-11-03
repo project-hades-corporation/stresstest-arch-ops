@@ -66,6 +66,80 @@ class LLMGateway:
     # ------------------------------------------------------------------ #
     # Public API
     # ------------------------------------------------------------------ #
+    async def generate_with_image(
+        self,
+        prompt: str,
+        image_b64: str,
+        image_mime: str = "image/png",
+        model_override: str | None = None,
+    ) -> str:
+        """Send a text + image prompt to a vision-capable model."""
+        provider_name = get_provider_name(self.settings, model_override)
+        provider_key = (
+            provider_name if provider_name in PROVIDER_NAMES else ProviderName.OLLAMA.value
+        )
+        config = self.settings.get_provider_config(provider_key)
+        candidates = self._candidate_models(provider_key, config, model_override)
+        if not candidates:
+            raise GatewayError(f"No models available for provider '{provider_key}'.")
+
+        attempts_per_model = max(1, self.settings.max_retries)
+        last_error: Exception | None = None
+
+        for provider_cand, model in candidates:
+            attempt = 0
+            while attempt < attempts_per_model:
+                attempt += 1
+                try:
+                    messages: list[dict[str, Any]] = [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:{image_mime};base64,{image_b64}"
+                                    },
+                                },
+                                {"type": "text", "text": prompt},
+                            ],
+                        }
+                    ]
+                    call_kwargs: dict[str, Any] = {
+                        "model": self._model_identifier(provider_cand, model),
+                        "messages": messages,
+                        "timeout": max(self.settings.request_timeout, 90.0),
+                    }
+                    cand_config = self.settings.get_provider_config(provider_cand)
+                    if provider_cand in (
+                        ProviderName.CUSTOM.value,
+                        ProviderName.OPENCODE.value,
+                        ProviderName.LITELLM.value,
+                    ):
+                        call_kwargs["custom_llm_provider"] = "openai"
+                        if cand_config.base_url:
+                            call_kwargs["base_url"] = cand_config.base_url
+                        if cand_config.api_key:
+                            call_kwargs["api_key"] = cand_config.api_key
+                    elif provider_cand == ProviderName.OLLAMA.value:
+                        call_kwargs["base_url"] = (
+                            cand_config.base_url or self.settings.ollama_base_url
+                        )
+                    elif cand_config.api_key:
+                        call_kwargs["api_key"] = cand_config.api_key
+
+                    response = await acompletion(**call_kwargs)
+                    content = response.choices[0].message.content
+                    return content if content is not None else ""
+                except Exception as exc:  # noqa: BLE001
+                    last_error = exc
+                    if attempt < attempts_per_model:
+                        await self._backoff(attempt - 1)
+                        continue
+                    break
+
+        raise GatewayError(f"Vision generation failed. Last error: {last_error}")
+
     async def generate(
         self,
         prompt: str,
